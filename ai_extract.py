@@ -1,118 +1,221 @@
-import os
+
 import json
 import pandas as pd
-from openai import OpenAI
+import ollama
 
 
 # ============================================
-# STEP 1: Connect to OpenAI
+# 1. Load PubMed data
 # ============================================
 
-client = OpenAI(
-    api_key=os.environ.get("OPENAI_API_KEY")
-)
-
-
-# ============================================
-# STEP 2: Read PubMed Excel file
-# ============================================
-
-input_file = "alzheimer_pubmed_papers.xlsx"
-
+input_file =  "alzheimer_biosensor_pubmed.xlsx"
+output_file = "biosensor_data_2026_papers.xlsx"
 df = pd.read_excel(input_file)
 
-print("Papers loaded:", len(df))
+print("====================================")
+print("ALZHEIMER'S BIOSENSOR MINING")
+print("====================================")
+print("Total papers:", len(df))
 
 
 # ============================================
-# STEP 3: Prepare list for AI extraction
+# 2. Store results
 # ============================================
 
 results = []
 
+
+# ============================================
+# 3. Function to safely parse AI JSON
+# ============================================
+
+def clean_json_response(answer):
+
+    answer = answer.strip()
+
+    # Remove Markdown code fences
+    answer = answer.replace("```json", "")
+    answer = answer.replace("```", "")
+
+    answer = answer.strip()
+
+    # Find the first JSON object
+    start = answer.find("{")
+    end = answer.rfind("}")
+
+    if start != -1 and end != -1:
+
+        answer = answer[start:end + 1]
+
+    return json.loads(answer)
+
+
+# ============================================
+# 4. Process papers
+# ============================================
+
 for index, row in df.iterrows():
 
-    print(f"\nProcessing paper {index + 1}/{len(df)}")
+    print()
+    print("------------------------------------")
+    print(f"Processing paper {index + 1}/{len(df)}")
+    print("------------------------------------")
 
     abstract = row["Abstract"]
 
-    # Skip papers without an abstract
     if pd.isna(abstract) or not str(abstract).strip():
-        print("No abstract — skipping.")
+
+        print("No abstract found. Skipping.")
+
         continue
 
+
     # ========================================
-    # AI prompt
+    # 5. AI prompt
     # ========================================
 
     prompt = f"""
-You are a biomedical research assistant.
+You are an expert biomedical literature-mining assistant
+specialized in Alzheimer's disease and biosensors.
 
-Analyze the following scientific abstract about Alzheimer's disease.
+Analyze the scientific abstract below.
 
-Extract the following information:
+Extract ONLY information explicitly supported by the abstract.
 
-1. Biomarkers
-2. Genes
-3. Proteins
-4. Drugs or therapeutic compounds
-5. Molecular pathways
-6. Diseases or conditions
-7. Main research finding
+Do NOT invent information.
 
-Return ONLY valid JSON using exactly this structure:
+Extract:
+
+1. Disease
+2. Biomarker / analyte
+3. Sensor type
+4. Detection method
+5. Bioreceptor
+6. Nanomaterial
+7. Electrode material
+8. Sample type
+9. Limit of detection (LOD)
+10. Limit of quantification (LOQ)
+11. Linear detection range
+12. Sensitivity
+13. Main finding
+
+If a field is not reported, return an empty string.
+
+Return ONLY a JSON object.
+
+Do NOT write explanations.
+Do NOT use Markdown.
+Do NOT put ``` around the JSON.
+
+The JSON must have exactly these fields:
 
 {{
-    "biomarkers": [],
-    "genes": [],
-    "proteins": [],
-    "drugs": [],
-    "pathways": [],
-    "diseases": [],
+    "disease": "",
+    "biomarker": "",
+    "sensor_type": "",
+    "detection_method": "",
+    "bioreceptor": "",
+    "nanomaterial": "",
+    "electrode_material": "",
+    "sample_type": "",
+    "lod": "",
+    "loq": "",
+    "linear_range": "",
+    "sensitivity": "",
     "main_finding": ""
 }}
 
-Scientific abstract:
+ABSTRACT:
 
 {abstract}
 """
 
+
+    # ========================================
+    # 6. Send to Ollama
+    # ========================================
+
     try:
 
-        # ====================================
-        # Send request to OpenAI
-        # ====================================
+        response = ollama.chat(
 
-        response = client.responses.create(
-            model="gpt-5-mini",
-            input=prompt
+            model="llama3.2:3b",
+
+            messages=[
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+
+            format="json"
         )
 
-        answer = response.output_text
+        answer = response["message"]["content"]
+
+        print("AI response received.")
+
 
         # ====================================
-        # Convert AI response to JSON
+        # 7. Parse JSON
         # ====================================
 
-        extracted = json.loads(answer)
+        try:
+
+            extracted = clean_json_response(answer)
+
+        except Exception as e:
+
+            print("JSON parsing failed.")
+
+            print("Raw AI response:")
+            print(answer)
+
+            extracted = {
+
+                "disease": "",
+                "biomarker": "",
+                "sensor_type": "",
+                "detection_method": "",
+                "bioreceptor": "",
+                "nanomaterial": "",
+                "electrode_material": "",
+                "sample_type": "",
+                "lod": "",
+                "loq": "",
+                "linear_range": "",
+                "sensitivity": "",
+                "main_finding": "JSON parsing failed"
+
+            }
+
 
     except Exception as e:
 
-        print("AI error:", e)
+        print("AI ERROR:", e)
 
         extracted = {
-            "biomarkers": [],
-            "genes": [],
-            "proteins": [],
-            "drugs": [],
-            "pathways": [],
-            "diseases": [],
-            "main_finding": "Extraction failed"
+
+            "disease": "",
+            "biomarker": "",
+            "sensor_type": "",
+            "detection_method": "",
+            "bioreceptor": "",
+            "nanomaterial": "",
+            "electrode_material": "",
+            "sample_type": "",
+            "lod": "",
+            "loq": "",
+            "linear_range": "",
+            "sensitivity": "",
+            "main_finding": "AI extraction failed"
+
         }
 
 
     # ========================================
-    # Save result
+    # 8. Save result
     # ========================================
 
     results.append({
@@ -125,41 +228,60 @@ Scientific abstract:
 
         "Year": row["Year"],
 
-        "Biomarkers":
-            ", ".join(extracted.get("biomarkers", [])),
+        "Disease":
+            extracted.get("disease", ""),
 
-        "Genes":
-            ", ".join(extracted.get("genes", [])),
+        "Biomarker":
+            extracted.get("biomarker", ""),
 
-        "Proteins":
-            ", ".join(extracted.get("proteins", [])),
+        "Sensor Type":
+            extracted.get("sensor_type", ""),
 
-        "Drugs":
-            ", ".join(extracted.get("drugs", [])),
+        "Detection Method":
+            extracted.get("detection_method", ""),
 
-        "Pathways":
-            ", ".join(extracted.get("pathways", [])),
+        "Bioreceptor":
+            extracted.get("bioreceptor", ""),
 
-        "Diseases":
-            ", ".join(extracted.get("diseases", [])),
+        "Nanomaterial":
+            extracted.get("nanomaterial", ""),
+
+        "Electrode Material":
+            extracted.get("electrode_material", ""),
+
+        "Sample Type":
+            extracted.get("sample_type", ""),
+
+        "LOD":
+            extracted.get("lod", ""),
+
+        "LOQ":
+            extracted.get("loq", ""),
+
+        "Linear Range":
+            extracted.get("linear_range", ""),
+
+        "Sensitivity":
+            extracted.get("sensitivity", ""),
 
         "Main Finding":
             extracted.get("main_finding", "")
+
     })
 
 
 # ============================================
-# STEP 4: Create final DataFrame
+# 9. Create DataFrame
 # ============================================
 
 output = pd.DataFrame(results)
 
 
 # ============================================
-# STEP 5: Save Excel file
+# 10. Save database
 # ============================================
 
-output_file = "alzheimer_ai_extracted.xlsx"
+output_file = "biosensor_data_of_2026_papers.xlsx"
 
 output.to_excel(
     output_file,
@@ -168,14 +290,16 @@ output.to_excel(
 
 
 # ============================================
-# DONE
+# 11. Finished
 # ============================================
 
-print("\n====================================")
-print("🎉 AI EXTRACTION COMPLETE!")
+print()
+print("====================================")
+print("🎉 BIOSENSOR MINING COMPLETE!")
 print("====================================")
 
 print("Papers processed:", len(output))
 
-print("Output file:")
+print()
+print("Created:")
 print(output_file)
